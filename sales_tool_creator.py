@@ -2,9 +2,10 @@ import streamlit as st
 import openai
 import json
 import pdfkit
+import os
 
-# Set your OpenAI API key here or use streamlit secrets
-openai.api_key = st.secrets.get("openai_api_key", "YOUR_OPENAI_API_KEY")
+# Initialize OpenAI client (requires openai>=1.2.0)
+client = openai.OpenAI(api_key=st.secrets.get("openai_api_key", "YOUR_OPENAI_API_KEY"))
 
 # Define company input prompts
 def get_company_info():
@@ -32,14 +33,18 @@ def get_company_info():
             return None
     return None
 
-# Load persona scenarios (expand as needed)
+# Load persona scenarios safely
 def load_personas():
-    with open("prospects.json") as f:
-        return json.load(f)
+    if os.path.exists("prospects.json"):
+        with open("prospects.json") as f:
+            return json.load(f)
+    else:
+        st.warning("⚠️ Warning: prospects.json not found. Continuing without personas.")
+        return []
 
-# Generate content with ChatGPT
+# Generate content with OpenAI v1+
 def generate_content(prompt):
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a B2B sales expert trained on Dale Carnegie, Sandler, and Challenger frameworks."},
@@ -47,10 +52,14 @@ def generate_content(prompt):
         ],
         temperature=0.7
     )
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
 # Generate all deliverables
 def create_deliverables(info, personas):
+    persona_summary = "\n".join(
+        [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
+    ) if personas else "No personas provided."
+
     prompt = f"""
 Create the following based on this company:
 Company Name: {info['company_name']}
@@ -66,12 +75,12 @@ Tone: {info['tone']}
 4. Prospecting email sequence (intro, follow-up, breakup)
 5. 2 elevator pitch versions (short and descriptive)
 6. 5-7 needs assessment questions
-7. Example customer personas with pain points
 
-Base this on Dale Carnegie, Sandler, and Challenger principles.
+Use Dale Carnegie, Sandler, and Challenger principles.
+Example customer personas (if any): 
+{persona_summary}
 """
-    result = generate_content(prompt)
-    return result
+    return generate_content(prompt)
 
 # Save deliverables to PDF
 def save_to_pdf(content, filename="sales_tools.pdf"):

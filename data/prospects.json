@@ -1,0 +1,56 @@
+[
+    {
+        "industry": "Healthcare",
+        "persona": "HR Director",
+        "pain_points": [
+            "compliance with regulations",
+            "reducing employee turnover",
+            "controlling healthcare costs"
+        ]
+    },
+    {
+        "industry": "Logistics",
+        "persona": "Fleet Manager",
+        "pain_points": [
+            "ensuring DOT compliance",
+            "reducing driver downtime",
+            "improving delivery efficiency"
+        ]
+    },
+    {
+        "industry": "SaaS",
+        "persona": "CTO",
+        "pain_points": [
+            "scalability of platform",
+            "data security",
+            "shortening sales cycles"
+        ]
+    },
+    {
+        "industry": "Retail",
+        "persona": "Store Manager",
+        "pain_points": [
+            "managing seasonal staff",
+            "improving customer experience",
+            "reducing shrinkage and loss"
+        ]
+    },
+    {
+        "industry": "Manufacturing",
+        "persona": "Operations Manager",
+        "pain_points": [
+            "improving production uptime",
+            "reducing maintenance costs",
+            "meeting safety compliance"
+        ]
+    },
+    {
+        "industry": "Financial Services",
+        "persona": "Compliance Officer",
+        "pain_points": [
+            "managing regulatory change",
+            "avoiding audit penalties",
+            "streamlining reporting processes"
+        ]
+    }
+]

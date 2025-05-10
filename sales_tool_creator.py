@@ -5,7 +5,7 @@ import pdfkit
 import os
 
 # Initialize OpenAI client (requires openai>=1.2.0)
-client = openai.OpenAI(api_key=st.secrets.get("openai_api_key", "YOUR_OPENAI_API_KEY"))
+client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
 # Define company input prompts
 def get_company_info():

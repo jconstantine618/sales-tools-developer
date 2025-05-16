@@ -1,211 +1,97 @@
 import streamlit as st
 import openai
-import json
-import requests
-import pdfkit
+from docx import Document
+from docx.shared import Pt
+from typing import Dict, List
 import os
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from typing import List
 
-# Initialize OpenAI client
+# Set up OpenAI client
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
-# Crawl and extract up to 10 pages from the website
-def extract_website_text(base_url, max_pages=10):
-    visited = set()
-    to_visit = [base_url]
-    domain = urlparse(base_url).netloc
-    all_text = []
+# Playbook sections to generate
+SECTION_TITLES = [
+    "Company Overview",
+    "Value Propositions",
+    "Customer Benefits",
+    "Target Audience",
+    "Needs Assessment Questions",
+    "Demo Customer Personas",
+    "Closing Questions",
+    "Lead Generation Channels & Next Steps"
+]
 
-    headers = {"User-Agent": "Mozilla/5.0"}
+# Generate one section via GPT
+def generate_section_content(section: str, info: Dict, personas: List[Dict]) -> str:
+    persona_text = "\n".join([
+        f"- {p['industry']} {p['persona']}, Pain Points: {', '.join(p['pain_points'])}"
+        for p in personas
+    ]) if personas else "N/A"
 
-    while to_visit and len(visited) < max_pages:
-        url = to_visit.pop(0)
-        if url in visited:
-            continue
+    base_context = f"""
+Company Name: {info['company_name']}
+Products/Services: {info['products_services']}
+Target Audience: {info['target_audience']}
+Top Problems: {info['top_problems']}
+Unique Value Proposition: {info['value_prop']}
+Website Content: {info['website_text'][:1500]}
+Personas: {persona_text}
+Tone: {info['tone']}
+"""
 
-        try:
-            response = requests.get(url, timeout=10, headers=headers)
-            soup = BeautifulSoup(response.content, "html.parser")
+    prompt = f"""
+{base_context}
 
-            for tag in soup(["script", "style", "noscript"]):
-                tag.extract()
+Write the **{section}** section of a B2B Sales Playbook. Use a professional and conversational tone inspired by Dale Carnegie, Challenger, and Sandler sales principles. Structure it as a sales assistant would use to guide a customer conversation. Include helpful examples and bullet points where appropriate.
+"""
 
-            text = soup.get_text(separator=" ", strip=True)
-            all_text.append(f"[{url}]\n{text[:3000]}")
-
-            for link in soup.find_all("a", href=True):
-                abs_url = urljoin(base_url, link["href"])
-                parsed = urlparse(abs_url)
-                if parsed.netloc == domain and abs_url not in visited and abs_url not in to_visit:
-                    to_visit.append(abs_url)
-
-            visited.add(url)
-
-        except Exception as e:
-            st.warning(f"Failed to fetch {url}: {e}")
-            continue
-
-    return "\n\n".join(all_text)[:10000]
-
-# Input form for company info
-def get_company_info():
-    st.header("🚀 Sales Script & Tools Generator")
-
-    company_name = st.text_input("Company Name")
-    website = st.text_input("Company Website (https://...)")
-    products_services = st.text_area("Describe your Products or Services")
-    target_audience = st.text_input("Who is your target audience?")
-    top_problems = st.text_area("What top 3 problems do you solve?")
-    value_prop = st.text_area("What is your unique value proposition?")
-    tone = st.selectbox("What tone fits your brand?", ["Friendly", "Formal", "Bold", "Consultative"])
-
-    if st.button("Generate Sales Tools"):
-        if all([company_name, website, products_services, target_audience, top_problems, value_prop]):
-            st.info("🔎 Crawling website and extracting content...")
-            website_text = extract_website_text(website)
-            return {
-                "company_name": company_name,
-                "website": website,
-                "website_text": website_text,
-                "products_services": products_services,
-                "target_audience": target_audience,
-                "top_problems": top_problems,
-                "value_prop": value_prop,
-                "tone": tone,
-                "extra_notes": ""
-            }
-        else:
-            st.warning("Please complete all fields.")
-    return None
-
-# In-app persona builder
-def get_user_defined_personas() -> List[dict]:
-    st.markdown("### 👥 Add Customer Personas")
-
-    if "personas" not in st.session_state:
-        st.session_state.personas = []
-
-    with st.form("add_persona_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            industry = st.text_input("Industry", key="industry_input")
-        with col2:
-            persona = st.text_input("Persona Title", key="persona_input")
-
-        pain_points = st.text_area("Pain Points (comma separated)", key="pain_input")
-        submitted = st.form_submit_button("➕ Add Persona")
-
-        if submitted:
-            if industry and persona and pain_points:
-                st.session_state.personas.append({
-                    "industry": industry,
-                    "persona": persona,
-                    "pain_points": [p.strip() for p in pain_points.split(",") if p.strip()]
-                })
-                st.success(f"Added persona: {industry} - {persona}")
-            else:
-                st.warning("Please fill in all fields before adding.")
-
-    if st.session_state.personas:
-        st.markdown("#### Current Personas:")
-        for idx, p in enumerate(st.session_state.personas):
-            st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
-
-# GPT generation
-def generate_content(prompt):
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role": "system", "content": "You are a B2B sales expert trained in Dale Carnegie, Sandler, and Challenger frameworks."},
+            {"role": "system", "content": "You are a B2B sales strategist writing sales playbooks based on company profiles."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.7
     )
-    return response.choices[0].message.content
+    return response.choices[0].message.content.strip()
 
-# Prompt builder
-def create_deliverables(info, personas):
-    persona_summary = "\n".join(
-        [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
-    ) if personas else "No personas provided."
+# Build .docx file from section data
+def build_word_doc(company_name: str, section_texts: Dict[str, str]) -> Document:
+    doc = Document()
+    doc.add_heading(f"{company_name} B2B Sales Playbook", 0)
 
-    prompt = f"""
-Based on the following company profile, generate comprehensive B2B sales tools using Dale Carnegie, Sandler, and Challenger frameworks:
+    for title, content in section_texts.items():
+        doc.add_heading(title, level=1)
+        for paragraph in content.split("\n"):
+            if paragraph.strip():
+                p = doc.add_paragraph(paragraph.strip())
+                p.style.font.size = Pt(11)
+    return doc
 
-Company Name: {info['company_name']}
-Website URL: {info['website']}
-Website Text Extract:
-{info['website_text'][:2000]}...
+# Main Streamlit UI flow
+def render_playbook_builder(info: Dict, personas: List[Dict]):
+    st.markdown("## 📘 Build Your Custom B2B Sales Playbook")
 
-Products/Services: {info['products_services']}
-Target Audience: {info['target_audience']}
-Top Problems Solved: {info['top_problems']}
-Unique Value Proposition: {info['value_prop']}
-Tone: {info['tone']}
+    if "playbook_sections" not in st.session_state:
+        st.session_state.playbook_sections = {}
+        with st.spinner("🧠 Generating initial content using GPT..."):
+            for section in SECTION_TITLES:
+                content = generate_section_content(section, info, personas)
+                st.session_state.playbook_sections[section] = content
 
-Customer personas to target:
-{persona_summary}
+    edited_sections = {}
 
-Additional context from user: {info.get("extra_notes", "")}
-
-DELIVERABLES TO RETURN:
-
-1. A cold call script
-2. A warm intro call script
-3. A discovery call script
-4. An email sequence (intro, follow-up, breakup)
-5. **Three different elevator pitches** for different tones/contexts
-6. **5–7 needs assessment questions**
-7. A **comprehensive description of ideal target prospects**, including any not explicitly listed above.
-"""
-    return generate_content(prompt)
-
-# PDF export
-def save_to_pdf(content, filename="sales_tools.pdf"):
-    html_content = f"<pre>{content}</pre>"
-    pdfkit.from_string(html_content, filename)
-    return filename
-
-# Main app logic (fixed session handling)
-def main():
-    st.set_page_config(layout="wide")
-    st.title("🎯 B2B Sales Tool Generator (GPT-Enhanced)")
-
-    if "info" not in st.session_state:
-        st.session_state.info = None
-
-    if st.session_state.info is None:
-        info = get_company_info()
-        if info:
-            st.session_state.info = info
-            st.rerun()
-
-    else:
-        get_user_defined_personas()
-        personas = st.session_state.personas
-        deliverables = create_deliverables(st.session_state.info, personas)
-
-        st.success("✅ Sales tools generated!")
-        st.text_area("Generated Sales Tools", deliverables, height=500)
-
-        if st.button("Download as PDF"):
-            filename = save_to_pdf(deliverables)
-            with open(filename, "rb") as f:
-                st.download_button("📥 Download PDF", f, file_name="sales_tools.pdf")
-
-        st.markdown("### 💬 Chat with GPT to Refine Your Tools")
-        user_feedback = st.text_area(
-            "Is there anything you would like to add or other thoughts that this gives you to further refine the tools provided?",
-            placeholder="e.g., Add a version for government clients or adjust the tone to be more assertive."
+    for section in SECTION_TITLES:
+        st.markdown(f"### ✏️ {section}")
+        edited = st.text_area(
+            f"Edit '{section}' content below:",
+            value=st.session_state.playbook_sections[section],
+            height=250
         )
+        edited_sections[section] = edited
 
-        if st.button("Regenerate with Feedback"):
-            st.session_state.info["extra_notes"] = user_feedback
-            updated = create_deliverables(st.session_state.info, personas)
-            st.success("🎯 Tools regenerated with your input!")
-            st.text_area("Updated Tools", updated, height=500)
-
-if __name__ == "__main__":
-    main()
+    if st.button("📥 Export as Word Document"):
+        doc = build_word_doc(info["company_name"], edited_sections)
+        file_name = f"{info['company_name'].replace(' ', '_')}_Sales_Playbook.docx"
+        doc.save(file_name)
+        with open(file_name, "rb") as f:
+            st.download_button("Download Playbook", f, file_name=file_name)

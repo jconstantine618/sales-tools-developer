@@ -3,3 +3,4 @@ openai>=1.2.0
 pdfkit>=1.0.0
 beautifulsoup4
 requests
+python-docx

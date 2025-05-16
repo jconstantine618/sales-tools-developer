@@ -47,7 +47,7 @@ def extract_website_text(base_url, max_pages=10):
             st.warning(f"Failed to fetch {url}: {e}")
             continue
 
-    return "\n\n".join(all_text)[:10000]  # limit for GPT token budget
+    return "\n\n".join(all_text)[:10000]
 
 # Input form for company info
 def get_company_info():
@@ -80,7 +80,7 @@ def get_company_info():
             st.warning("Please complete all fields.")
     return None
 
-# Persona builder UI
+# In-app persona builder
 def get_user_defined_personas() -> List[dict]:
     st.markdown("### 👥 Add Customer Personas")
 
@@ -113,7 +113,7 @@ def get_user_defined_personas() -> List[dict]:
         for idx, p in enumerate(st.session_state.personas):
             st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
 
-# Use GPT to generate all content
+# GPT generation
 def generate_content(prompt):
     response = client.chat.completions.create(
         model="gpt-4",
@@ -125,7 +125,7 @@ def generate_content(prompt):
     )
     return response.choices[0].message.content
 
-# Construct prompt for GPT
+# Prompt builder
 def create_deliverables(info, personas):
     persona_summary = "\n".join(
         [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
@@ -168,15 +168,21 @@ def save_to_pdf(content, filename="sales_tools.pdf"):
     pdfkit.from_string(html_content, filename)
     return filename
 
-# Main app
+# Main app logic (fixed session handling)
 def main():
     st.set_page_config(layout="wide")
     st.title("🎯 B2B Sales Tool Generator (GPT-Enhanced)")
 
     if "info" not in st.session_state:
-        st.session_state.info = get_company_info()
+        st.session_state.info = None
 
-    if st.session_state.info:
+    if st.session_state.info is None:
+        info = get_company_info()
+        if info:
+            st.session_state.info = info
+            st.rerun()
+
+    else:
         get_user_defined_personas()
         personas = st.session_state.personas
         deliverables = create_deliverables(st.session_state.info, personas)

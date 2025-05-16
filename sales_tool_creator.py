@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 # Initialize OpenAI client
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
-# Crawl and extract up to 10 internal pages
+# Crawl and extract up to 10 pages from the website
 def extract_website_text(base_url, max_pages=10):
     visited = set()
     to_visit = [base_url]
@@ -46,9 +46,9 @@ def extract_website_text(base_url, max_pages=10):
             st.warning(f"Failed to fetch {url}: {e}")
             continue
 
-    return "\n\n".join(all_text)[:10000]  # trimmed for GPT token limits
+    return "\n\n".join(all_text)[:10000]  # limit content for GPT prompt
 
-# Input form for company info
+# Form to gather company inputs
 def get_company_info():
     st.header("🚀 Sales Script & Tools Generator")
 
@@ -72,14 +72,14 @@ def get_company_info():
                 "target_audience": target_audience,
                 "top_problems": top_problems,
                 "value_prop": value_prop,
-                "tone": tone
+                "tone": tone,
+                "extra_notes": ""
             }
         else:
             st.warning("Please complete all fields.")
-            return None
     return None
 
-# Load personas
+# Load personas from local file
 def load_personas():
     if os.path.exists("prospects.json"):
         with open("prospects.json") as f:
@@ -87,7 +87,7 @@ def load_personas():
     else:
         return []
 
-# GPT content generator
+# Use OpenAI to generate all content
 def generate_content(prompt):
     response = client.chat.completions.create(
         model="gpt-4",
@@ -99,53 +99,60 @@ def generate_content(prompt):
     )
     return response.choices[0].message.content
 
-# Construct GPT prompt
+# Compose the full prompt to GPT
 def create_deliverables(info, personas):
     persona_summary = "\n".join(
         [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
     ) if personas else "No personas provided."
 
     prompt = f"""
-Use the following company information to generate:
-
-1. Cold call script
-2. Warm intro script
-3. Discovery call script
-4. Prospecting email sequence (intro, follow-up, breakup)
-5. 2 elevator pitch versions (short and descriptive)
-6. 5-7 needs assessment questions
-
-Use Dale Carnegie, Sandler, and Challenger selling principles.
-Tone: {info['tone']}
+Based on the following company profile, generate comprehensive B2B sales tools using Dale Carnegie, Sandler, and Challenger frameworks:
 
 Company Name: {info['company_name']}
 Website URL: {info['website']}
-Extracted Website Content:
+Website Text Extract:
 {info['website_text'][:2000]}...
 
 Products/Services: {info['products_services']}
 Target Audience: {info['target_audience']}
 Top Problems Solved: {info['top_problems']}
-Value Proposition: {info['value_prop']}
+Unique Value Proposition: {info['value_prop']}
+Tone: {info['tone']}
 
 Customer personas to target:
 {persona_summary}
+
+Additional context from user: {info.get("extra_notes", "")}
+
+DELIVERABLES TO RETURN:
+
+1. A cold call script
+2. A warm intro call script
+3. A discovery call script
+4. An email sequence (intro, follow-up, breakup)
+5. **Three different elevator pitches** for different tones/contexts
+6. **5–7 needs assessment questions**
+7. A **comprehensive description of ideal target prospects**, including any not explicitly listed above.
 """
     return generate_content(prompt)
 
-# Save text output to PDF
+# PDF conversion
 def save_to_pdf(content, filename="sales_tools.pdf"):
     html_content = f"<pre>{content}</pre>"
     pdfkit.from_string(html_content, filename)
     return filename
 
-# Main app
+# Main Streamlit app logic
 def main():
-    info = get_company_info()
-    if info:
-        st.info("Generating sales tools with ChatGPT... ⏳")
+    st.set_page_config(layout="wide")
+    st.title("🎯 B2B Sales Tool Generator (GPT-Enhanced)")
+
+    if "info" not in st.session_state:
+        st.session_state.info = get_company_info()
+
+    if st.session_state.info:
         personas = load_personas()
-        deliverables = create_deliverables(info, personas)
+        deliverables = create_deliverables(st.session_state.info, personas)
         st.success("✅ Sales tools generated!")
         st.text_area("Generated Sales Tools", deliverables, height=500)
 
@@ -153,6 +160,18 @@ def main():
             filename = save_to_pdf(deliverables)
             with open(filename, "rb") as f:
                 st.download_button("📥 Download PDF", f, file_name="sales_tools.pdf")
+
+        st.markdown("### 💬 Chat with GPT to Refine Your Tools")
+        user_feedback = st.text_area(
+            "Is there anything you would like to add or other thoughts that this gives you to further refine the tools provided?",
+            placeholder="e.g., Add a version for government clients or adjust the tone to be more assertive."
+        )
+
+        if st.button("Regenerate with Feedback"):
+            st.session_state.info["extra_notes"] = user_feedback
+            updated = create_deliverables(st.session_state.info, personas)
+            st.success("🎯 Tools regenerated with your input!")
+            st.text_area("Updated Tools", updated, height=500)
 
 if __name__ == "__main__":
     main()

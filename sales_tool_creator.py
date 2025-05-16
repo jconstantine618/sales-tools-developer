@@ -6,6 +6,7 @@ import pdfkit
 import os
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
+from typing import List
 
 # Initialize OpenAI client
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
@@ -46,9 +47,9 @@ def extract_website_text(base_url, max_pages=10):
             st.warning(f"Failed to fetch {url}: {e}")
             continue
 
-    return "\n\n".join(all_text)[:10000]  # limit content for GPT prompt
+    return "\n\n".join(all_text)[:10000]  # limit for GPT token budget
 
-# Form to gather company inputs
+# Input form for company info
 def get_company_info():
     st.header("🚀 Sales Script & Tools Generator")
 
@@ -79,15 +80,40 @@ def get_company_info():
             st.warning("Please complete all fields.")
     return None
 
-# Load personas from local file
-def load_personas():
-    if os.path.exists("prospects.json"):
-        with open("prospects.json") as f:
-            return json.load(f)
-    else:
-        return []
+# Persona builder UI
+def get_user_defined_personas() -> List[dict]:
+    st.markdown("### 👥 Add Customer Personas")
 
-# Use OpenAI to generate all content
+    if "personas" not in st.session_state:
+        st.session_state.personas = []
+
+    with st.form("add_persona_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            industry = st.text_input("Industry", key="industry_input")
+        with col2:
+            persona = st.text_input("Persona Title", key="persona_input")
+
+        pain_points = st.text_area("Pain Points (comma separated)", key="pain_input")
+        submitted = st.form_submit_button("➕ Add Persona")
+
+        if submitted:
+            if industry and persona and pain_points:
+                st.session_state.personas.append({
+                    "industry": industry,
+                    "persona": persona,
+                    "pain_points": [p.strip() for p in pain_points.split(",") if p.strip()]
+                })
+                st.success(f"Added persona: {industry} - {persona}")
+            else:
+                st.warning("Please fill in all fields before adding.")
+
+    if st.session_state.personas:
+        st.markdown("#### Current Personas:")
+        for idx, p in enumerate(st.session_state.personas):
+            st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
+
+# Use GPT to generate all content
 def generate_content(prompt):
     response = client.chat.completions.create(
         model="gpt-4",
@@ -99,7 +125,7 @@ def generate_content(prompt):
     )
     return response.choices[0].message.content
 
-# Compose the full prompt to GPT
+# Construct prompt for GPT
 def create_deliverables(info, personas):
     persona_summary = "\n".join(
         [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
@@ -136,13 +162,13 @@ DELIVERABLES TO RETURN:
 """
     return generate_content(prompt)
 
-# PDF conversion
+# PDF export
 def save_to_pdf(content, filename="sales_tools.pdf"):
     html_content = f"<pre>{content}</pre>"
     pdfkit.from_string(html_content, filename)
     return filename
 
-# Main Streamlit app logic
+# Main app
 def main():
     st.set_page_config(layout="wide")
     st.title("🎯 B2B Sales Tool Generator (GPT-Enhanced)")
@@ -151,8 +177,10 @@ def main():
         st.session_state.info = get_company_info()
 
     if st.session_state.info:
-        personas = load_personas()
+        get_user_defined_personas()
+        personas = st.session_state.personas
         deliverables = create_deliverables(st.session_state.info, personas)
+
         st.success("✅ Sales tools generated!")
         st.text_area("Generated Sales Tools", deliverables, height=500)
 

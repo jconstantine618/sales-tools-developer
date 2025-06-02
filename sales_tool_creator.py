@@ -120,9 +120,7 @@ Write the **{section}** section of a B2B Sales Playbook. Adopt a professional ye
 
 @st.cache_data(show_spinner="🧠 Generating playbook with GPT …")
 def generate_all_sections(info: Dict, personas: List[Dict]) -> Dict[str, str]:
-    return {
-        sec: generate_section_content(sec, info, personas) for sec in SECTION_TITLES
-    }
+    return {sec: generate_section_content(sec, info, personas) for sec in SECTION_TITLES}
 
 # ────────────────────────────────────────────────────────────────────────────────
 # WORD EXPORT
@@ -140,55 +138,73 @@ def build_word_doc(company_name: str, section_texts: Dict[str, str]) -> Document
     return doc
 
 # ────────────────────────────────────────────────────────────────────────────────
-# SIDEBAR INPUTS (NO RAW JSON ‑ user‑friendly persona builder)
+# SIDEBAR INPUTS (user‑friendly prospect builder)
 # ────────────────────────────────────────────────────────────────────────────────
 
 def sidebar_inputs() -> Tuple[Dict, List[Dict]]:
     with st.sidebar:
         st.header("Company Info")
-        company_name = st.text_input("Company Name")
-        products_services = st.text_area("Products / Services")
-        target_audience = st.text_input("Target Audience")
-        top_problems = st.text_area("Top Problems")
-        value_prop = st.text_area("Unique Value Proposition")
-        website_url = st.text_input("Company Website URL (https://…)")
+        company_name = st.text_input("Company Name", key="company_name")
+        products_services = st.text_area("Products / Services", key="products_services")
+        target_audience = st.text_input("Target Audience", key="target_audience")
+        top_problems = st.text_area("Top Problems", key="top_problems")
+        value_prop = st.text_area("Unique Value Proposition", key="value_prop")
+        website_url = st.text_input("Company Website URL (https://…)", key="website_url")
         tone = st.selectbox(
             "Writing Tone",
             ["Professional", "Friendly", "Conversational", "Challenger"],
             index=0,
+            key="tone_select",
         )
 
-        # Crawl website when URL entered
-        if website_url and "website_text" not in st.session_state:
-            try:
-                st.session_state.website_text = scrape_public_site(website_url)
-            except Exception as e:
-                st.warning(f"Could not scrape site: {e}")
-                st.session_state.website_text = ""
+        # Crawl / re‑crawl website when URL changes
+        if website_url:
+            if (
+                "scraped_url" not in st.session_state
+                or st.session_state.scraped_url != website_url
+            ):
+                try:
+                    st.session_state.website_text = scrape_public_site(website_url)
+                    st.session_state.scraped_url = website_url
+                except Exception as e:
+                    st.warning(f"Could not scrape site: {e}")
+                    st.session_state.website_text = ""
 
         st.divider()
         st.header("Prospect Types (max 5)")
+
+        # Initialise persona count
         if "num_personas" not in st.session_state:
             st.session_state.num_personas = 1
-        # Add button (disabled at 5)
-        if st.button("➕ Add another prospect type", disabled=st.session_state.num_personas >= 5):
+
+        # Add button (disabled after 5)
+        if st.button(
+            "➕ Add another prospect type",
+            disabled=st.session_state.num_personas >= 5,
+            key="add_persona_btn",
+        ):
             st.session_state.num_personas += 1
 
         personas: List[Dict] = []
         for i in range(st.session_state.num_personas):
             with st.expander(f"Prospect {i+1}", expanded=True):
-                industry = st.text_input("Company / Industry", key=f"ind_{i}")
-                role = st.text_input("Role / Title", key=f"role_{i}")
-                relation = st.text_area(
-                    "Why this role cares about your service", key=f"rel_{i}", height=60
+                industry = st.text_input(
+                    "Company / Industry", key=f"pers_{i}_industry"
                 )
-                # Only append if at least one field filled
+                role = st.text_input("Role / Title", key=f"pers_{i}_role")
+                relation = st.text_area(
+                    "Why this role cares about your service",
+                    key=f"pers_{i}_relation",
+                    height=80,
+                )
                 if industry or role or relation:
-                    personas.append({
-                        "industry": industry or "",
-                        "persona": role or "",
-                        "relation": relation or "",
-                    })
+                    personas.append(
+                        {
+                            "industry": industry or "",
+                            "persona": role or "",
+                            "relation": relation or "",
+                        }
+                    )
 
     info = {
         "company_name": company_name,
@@ -220,16 +236,18 @@ def render_playbook_builder(info: Dict, personas: List[Dict]):
         for sec in SECTION_TITLES:
             st.markdown(f"### ✏️ {sec}")
             edited[sec] = st.text_area(
-                f"Edit “{sec}” content below:",
+                f"Edit '{sec}' content below:",
                 value=st.session_state.playbook_sections[sec],
                 height=250,
-                key=f"ta_{sec}",
+                key=f"edit_{sec}",
             )
 
         st.divider()
-        if st.button("📥 Export as Word Document"):
+        if st.button("📥 Export as Word Document", key="export_doc_btn"):
             doc = build_word_doc(info["company_name"], edited)
-            filename = f"{re.sub(r'[^A-Za-z0-9]+', '_', info['company_name'])}_Sales_Playbook.docx"
+            filename = (
+                f"{re.sub(r'[^A-Za-z0-9]+', '_', info['company_name'])}_Sales_Playbook.docx"
+            )
             doc.save(filename)
             with open(filename, "rb") as f:
                 st.download_button(

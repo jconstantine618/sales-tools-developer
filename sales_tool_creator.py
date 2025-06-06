@@ -1,252 +1,213 @@
 import streamlit as st
-from typing import Dict, List, Tuple
-from openai import OpenAI
+import openai
+import requests
+import pdfkit
+import os
+import docx2txt
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from typing import List
+from PyPDF2 import PdfReader
 from docx import Document
 from docx.shared import Pt
-import requests, bs4
-from urllib.parse import urljoin, urlparse
 
-# ────────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG
-# ────────────────────────────────────────────────────────────────────────────────
+# Initialize OpenAI client
+client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
-st.set_page_config(
-    page_title="B2B Sales Playbook Builder", page_icon="📘", layout="wide"
-)
+# Crawl website up to 10 pages
+def extract_website_text(base_url, max_pages=10):
+    visited = set()
+    to_visit = [base_url]
+    domain = urlparse(base_url).netloc
+    all_text = []
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-# ────────────────────────────────────────────────────────────────────────────────
-# OPENAI CLIENT (cached per session)
-# ────────────────────────────────────────────────────────────────────────────────
-
-@st.cache_resource(show_spinner=False)
-def get_openai() -> OpenAI:
-    return OpenAI(api_key=st.secrets["openai_api_key"])
-
-client: OpenAI = get_openai()
-
-# ────────────────────────────────────────────────────────────────────────────────
-# CONSTANTS
-# ────────────────────────────────────────────────────────────────────────────────
-
-SECTION_TITLES: List[str] = [
-    "Company Overview",
-    "Value Propositions",
-    "Customer Benefits",
-    "Target Audience",
-    "Needs Assessment Questions",
-    "Demo Customer Personas",
-    "Closing Questions",
-    "Lead Generation Channels & Next Steps",
-]
-
-MAX_SITE_PAGES = 10  # safety‑limit for crawler
-MAX_SITE_CHARS = 5000  # send a sane chunk to GPT
-
-# ────────────────────────────────────────────────────────────────────────────────
-# WEBSITE SCRAPER
-# ────────────────────────────────────────────────────────────────────────────────
-
-@st.cache_data(show_spinner="🌐 Gathering website copy …")
-def scrape_public_site(root_url: str, max_pages: int = MAX_SITE_PAGES) -> str:
-    """Grab visible text from up to *max_pages* internal URLs (DFS crawl)."""
-
-    domain = urlparse(root_url).netloc
-    seen, to_visit = set(), [root_url]
-    texts: List[str] = []
-
-    while to_visit and len(seen) < max_pages:
+    while to_visit and len(visited) < max_pages:
         url = to_visit.pop(0)
-        if url in seen:
+        if url in visited:
             continue
-        seen.add(url)
         try:
-            r = requests.get(url, timeout=6)
-            if not r.ok or "text/html" not in r.headers.get("Content-Type", ""):
-                continue
-        except Exception:
+            response = requests.get(url, timeout=10, headers=headers)
+            soup = BeautifulSoup(response.content, "html.parser")
+            for tag in soup(["script", "style", "noscript"]):
+                tag.extract()
+            text = soup.get_text(separator=" ", strip=True)
+            all_text.append(f"[{url}]\n{text[:3000]}")
+            for link in soup.find_all("a", href=True):
+                abs_url = urljoin(base_url, link["href"])
+                parsed = urlparse(abs_url)
+                if parsed.netloc == domain and abs_url not in visited and abs_url not in to_visit:
+                    to_visit.append(abs_url)
+            visited.add(url)
+        except Exception as e:
+            st.warning(f"Failed to fetch {url}: {e}")
             continue
+    return "\n\n".join(all_text)[:10000]
 
-        soup = bs4.BeautifulSoup(r.text, "html.parser")
-        for s in soup(["script", "style", "noscript"]):
-            s.extract()
-        page_text = " ".join(t.strip() for t in soup.stripped_strings)
-        texts.append(page_text)
+# Company input form
+def get_company_info():
+    st.header("🚀 Sales Playbook Generator")
+    company_name = st.text_input("Company Name")
+    website = st.text_input("Company Website (https://...)")
+    products_services = st.text_area("Describe your Products or Services")
+    target_audience = st.text_input("Who is your target audience?")
+    top_problems = st.text_area("What top 3 problems do you solve?")
+    value_prop = st.text_area("What is your unique value proposition?")
+    tone = st.selectbox("What tone fits your brand?", ["Friendly", "Formal", "Bold", "Consultative"])
 
-        for a in soup.find_all("a", href=True):
-            link = urljoin(url, a["href"])
-            if (
-                urlparse(link).netloc == domain
-                and link not in seen
-                and link not in to_visit
-            ):
-                to_visit.append(link)
+    st.markdown("### 📎 Optional: Upload Sales Collateral")
+    uploaded_files = st.file_uploader(
+        "Upload brochures, PDFs, or Word docs to help GPT generate a more complete playbook",
+        type=["pdf", "docx"],
+        accept_multiple_files=True
+    )
 
-    return " \n".join(texts)[:MAX_SITE_CHARS]
+    if st.button("Generate Sales Tools"):
+        if all([company_name, website, products_services, target_audience, top_problems, value_prop]):
+            st.info("🔎 Crawling website and extracting content...")
+            website_text = extract_website_text(website)
+            return {
+                "company_name": company_name,
+                "website": website,
+                "website_text": website_text,
+                "products_services": products_services,
+                "target_audience": target_audience,
+                "top_problems": top_problems,
+                "value_prop": value_prop,
+                "tone": tone,
+                "extra_notes": "",
+                "uploaded_files": uploaded_files
+            }
+        else:
+            st.warning("Please complete all fields.")
+    return None
 
-# ────────────────────────────────────────────────────────────────────────────────
-# GPT‑4 SECTION GENERATION
-# ────────────────────────────────────────────────────────────────────────────────
+# Extract PDF and DOCX content
+def extract_uploaded_text(files):
+    content = []
+    for file in files:
+        if file.type == "application/pdf":
+            pdf = PdfReader(file)
+            text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+            content.append(text)
+        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            text = docx2txt.process(file)
+            content.append(text)
+    return "\n\n".join(content)
 
-def _persona_bullets(personas: List[Dict]) -> str:
-    if not personas:
-        return "N/A"
-    return "\n".join([
-        f"- {p['industry']} {p['persona']}: {p['relation']}" for p in personas
-    ])
+# Persona builder
+def get_user_defined_personas() -> List[dict]:
+    st.markdown("### 👥 Add Customer Personas")
+    if "personas" not in st.session_state:
+        st.session_state.personas = []
+    with st.form("add_persona_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            industry = st.text_input("Industry", key="industry_input")
+        with col2:
+            persona = st.text_input("Persona Title", key="persona_input")
+        pain_points = st.text_area("Pain Points (comma separated)", key="pain_input")
+        submitted = st.form_submit_button("➕ Add Persona")
+        if submitted:
+            if industry and persona and pain_points:
+                st.session_state.personas.append({
+                    "industry": industry,
+                    "persona": persona,
+                    "pain_points": [p.strip() for p in pain_points.split(",") if p.strip()]
+                })
+                st.success(f"Added persona: {industry} - {persona}")
+            else:
+                st.warning("Please fill in all fields before adding.")
+    if st.session_state.personas:
+        st.markdown("#### Current Personas:")
+        for p in st.session_state.personas:
+            st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
 
-
-def generate_section_content(section: str, info: Dict, personas: List[Dict]) -> str:
-    base = f"""
+# GPT playbook generation
+def create_deliverables(info, personas, collateral_text=""):
+    persona_summary = "\n".join(
+        [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
+    ) if personas else "No personas provided."
+    prompt = f"""
 Company Name: {info['company_name']}
+Website URL: {info['website']}
+Website Text: {info['website_text'][:2000]}
 Products/Services: {info['products_services']}
 Target Audience: {info['target_audience']}
 Top Problems: {info['top_problems']}
-Unique Value Proposition: {info['value_prop']}
-Website Copy Excerpt: {info['website_text'][:1500]}
-Personas:\n{_persona_bullets(personas)}
+Value Proposition: {info['value_prop']}
 Tone: {info['tone']}
+
+Customer personas:
+{persona_summary}
+
+User notes: {info.get("extra_notes", "")}
+
+Uploaded collateral:
+{collateral_text[:3000]}
+
+Now generate a complete B2B Sales Playbook with sections for:
+- Company Overview
+- Value Propositions
+- Customer Benefits
+- Target Audience
+- Needs Assessment Questions
+- Customer Personas
+- Objection Handling
+- Discovery Call Framework
+- Sales Email & Call Sequence
+- Closing Questions
+- Lead Generation Channels & Next Steps
 """
-    prompt = f"""{base}
-
-Write the **{section}** section of a B2B Sales Playbook. Adopt a professional yet conversational tone influenced by Dale Carnegie, Challenger, and Sandler methodologies. Use clear sub‑headers and bullet points where useful."""
-
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a B2B sales strategist writing sales playbooks based on company profiles.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.7,
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "system", "content": "You are a B2B sales strategist."},
+                  {"role": "user", "content": prompt}],
+        temperature=0.7
     )
-    return resp.choices[0].message.content.strip()
+    return response.choices[0].message.content.strip()
 
-
-def generate_all_sections(info: Dict, personas: List[Dict]) -> Dict[str, str]:
-    """Generate every playbook section on‑demand. No cache so we only run when user clicks."""
-    return {sec: generate_section_content(sec, info, personas) for sec in SECTION_TITLES}
-
-# ────────────────────────────────────────────────────────────────────────────────
-# WORD EXPORT
-# ────────────────────────────────────────────────────────────────────────────────
-
-def build_word_doc(company_name: str, section_texts: Dict[str, str]) -> Document:
+# Build Word document
+def save_to_word(content, company_name="Sales_Playbook"):
     doc = Document()
-    doc.add_heading(f"{company_name} B2B Sales Playbook", 0)
-    for title, body in section_texts.items():
-        doc.add_heading(title, level=1)
-        for para in body.split("\n"):
-            if para.strip():
-                p = doc.add_paragraph(para.strip())
-                p.style.font.size = Pt(11)
-    return doc
+    doc.add_heading(f"{company_name} B2B Sales Playbook", 0)
+    for section in content.split("### "):
+        if section.strip():
+            parts = section.strip().split("\n", 1)
+            title = parts[0].strip()
+            body = parts[1].strip() if len(parts) > 1 else ""
+            doc.add_heading(title, level=1)
+            for paragraph in body.split("\n"):
+                if paragraph.strip():
+                    p = doc.add_paragraph(paragraph.strip())
+                    p.style.font.size = Pt(11)
+    file_name = f"{company_name.replace(' ', '_')}_Sales_Playbook.docx"
+    doc.save(file_name)
+    return file_name
 
-# ────────────────────────────────────────────────────────────────────────────────
-# SIDEBAR INPUTS
-# ────────────────────────────────────────────────────────────────────────────────
-
-def sidebar_inputs() -> Tuple[Dict, List[Dict], bool]:
-    """Collect user inputs and return info, personas, and whether the generate button was pressed."""
-    with st.sidebar:
-        st.header("Company Info")
-        st.caption("Fill out the fields below. **Nothing is generated until you press the 'Generate / Update Playbook' button at the bottom.**")
-
-        company_name = st.text_input("Company Name")
-        products_services = st.text_area("Products / Services")
-        target_audience = st.text_input("Target Audience")
-        top_problems = st.text_area("Top Problems")
-        value_prop = st.text_area("Unique Value Proposition")
-        website_url = st.text_input("Company Website URL (https://…)")
-        tone = st.selectbox(
-            "Writing Tone",
-            ["Professional", "Friendly", "Conversational", "Challenger"],
-            index=0,
-        )
-
-        # Crawl website when the user explicitly requests it (optional)
-        if website_url and st.button("🔍 Fetch website copy", key="fetch_site"):
-            with st.spinner("Scraping website…"):
-                st.session_state.website_text = scrape_public_site(website_url)
-
-        st.divider()
-        st.header("Prospect Types (max 5)")
-
-        if "num_personas" not in st.session_state:
-            st.session_state.num_personas = 1
-
-        if st.button("➕ Add another prospect type", disabled=st.session_state.num_personas >= 5):
-            st.session_state.num_personas += 1
-
-        personas: List[Dict] = []
-        for i in range(st.session_state.num_personas):
-            with st.expander(f"Prospect {i+1}"):
-                industry = st.text_input("Company / Industry", key=f"pers_{i}_industry")
-                role = st.text_input("Role / Title", key=f"pers_{i}_role")
-                relation = st.text_area(
-                    "Why this role cares about your service", key=f"pers_{i}_relation", height=80
-                )
-                if industry or role or relation:
-                    personas.append(
-                        {"industry": industry, "persona": role, "relation": relation}
-                    )
-
-        st.markdown("---")
-        generate_clicked = st.button("🚀 Generate / Update Playbook")
-        if generate_clicked:
-            st.success("Generating or updating your playbook… you can keep working; results will appear in the main panel.")
-
-    info = {
-        "company_name": company_name,
-        "products_services": products_services,
-        "target_audience": target_audience,
-        "top_problems": top_problems,
-        "value_prop": value_prop,
-        "website_text": st.session_state.get("website_text", ""),
-        "tone": tone,
-    }
-    return info, personas, generate_clicked
-
-# ────────────────────────────────────────────────────────────────────────────────
-# RENDERER
-# ────────────────────────────────────────────────────────────────────────────────
-
-def render_playbook_builder():
-    st.markdown("## 📘 Build Your Custom B2B Sales Playbook")
-
-    info, personas, generate_clicked = sidebar_inputs()
-
-    # Only (re)generate when the user explicitly presses the button
-    if generate_clicked:
-        st.session_state.playbook_sections = generate_all_sections(info, personas)
-        st.session_state.playbook_company = info["company_name"] or "Company"
-
-    if "playbook_sections" in st.session_state:
-        company_header = st.session_state.get("playbook_company", "Company")
-        st.markdown(f"### ✨ {company_header} Playbook Preview")
-
-        # Editable text areas for each section
-        for section in SECTION_TITLES:
-            content = st.session_state.playbook_sections.get(section, "")
-            new_content = st.text_area(section, value=content, height=200)
-            st.session_state.playbook_sections[section] = new_content
-
-        # Export button
-        if st.button("💾 Export to Word (.docx)"):
-            doc = build_word_doc(company_header, st.session_state.playbook_sections)
-            file_name = f"{company_header}_Sales_Playbook.docx"
-            doc.save(file_name)
-            with open(file_name, "rb") as f:
-                st.download_button(
-                    label="Download Playbook", data=f, file_name=file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+# Main app flow
+def main():
+    st.set_page_config(layout="wide")
+    st.title("🎯 B2B Sales Playbook Generator")
+    if "info" not in st.session_state:
+        st.session_state.info = None
+    if st.session_state.info is None:
+        info = get_company_info()
+        if info:
+            st.session_state.info = info
+            st.rerun()
     else:
-        st.info("Fill out information in the sidebar, then click **Generate / Update Playbook** to create your playbook. You can tweak any field later and press the button again to refresh the content – the playbook will not regenerate automatically while you type.")
+        get_user_defined_personas()
+        collateral_text = extract_uploaded_text(st.session_state.info["uploaded_files"]) if st.session_state.info.get("uploaded_files") else ""
+        personas = st.session_state.personas
+        deliverables = create_deliverables(st.session_state.info, personas, collateral_text)
+        st.success("✅ Custom Sales Playbook Generated!")
+        st.text_area("📄 Full Playbook Preview", deliverables, height=600)
 
-# ────────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ────────────────────────────────────────────────────────────────────────────────
+        if st.button("📥 Download as Word Document"):
+            file_name = save_to_word(deliverables, st.session_state.info["company_name"])
+            with open(file_name, "rb") as f:
+                st.download_button("Download .docx", f, file_name=file_name)
 
 if __name__ == "__main__":
-    render_playbook_builder()
+    main()

@@ -8,7 +8,6 @@ from urllib.parse import urljoin, urlparse
 from typing import List
 from PyPDF2 import PdfFileReader
 from docx import Document as DocxDocument
-from docx.shared import Pt
 
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
@@ -18,7 +17,6 @@ def extract_website_text(base_url, max_pages=10):
     domain = urlparse(base_url).netloc
     all_text = []
     headers = {"User-Agent": "Mozilla/5.0"}
-
     while to_visit and len(visited) < max_pages:
         url = to_visit.pop(0)
         if url in visited:
@@ -50,14 +48,8 @@ def get_company_info():
     top_problems = st.text_area("What top 3 problems do you solve?")
     value_prop = st.text_area("What is your unique value proposition?")
     tone = st.selectbox("What tone fits your brand?", ["Friendly", "Formal", "Bold", "Consultative"])
-
     st.markdown("### 📎 Optional: Upload Sales Collateral")
-    uploaded_files = st.file_uploader(
-        "Upload brochures, PDFs, or Word docs",
-        type=["pdf", "docx"],
-        accept_multiple_files=True
-    )
-
+    uploaded_files = st.file_uploader("Upload brochures, PDFs, or Word docs", type=["pdf", "docx"], accept_multiple_files=True)
     if st.button("Generate Sales Tools"):
         if all([company_name, website, products_services, target_audience, top_problems, value_prop]):
             st.info("🔎 Crawling website and extracting content...")
@@ -119,10 +111,7 @@ def get_user_defined_personas():
             st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
 
 def create_deliverables(info, personas, collateral_text=""):
-    persona_summary = "\n".join(
-        [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
-    ) if personas else "No personas provided."
-
+    persona_summary = "\n".join([f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]) if personas else "No personas provided."
     prompt = f"""
 Company Name: {info['company_name']}
 Website URL: {info['website']}
@@ -137,7 +126,6 @@ Customer personas:
 {persona_summary}
 
 User notes: {info.get('extra_notes', '')}
-
 Uploaded collateral:
 {collateral_text[:3000]}
 
@@ -156,10 +144,7 @@ Generate a complete B2B Sales Playbook with sections for:
 """
     response = client.chat.completions.create(
         model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a B2B sales strategist."},
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "system", "content": "You are a B2B sales strategist."}, {"role": "user", "content": prompt}],
         temperature=0.7
     )
     return response.choices[0].message.content.strip()
@@ -175,8 +160,7 @@ def save_to_word(content, company_name="Sales_Playbook"):
             doc.add_heading(title, level=1)
             for paragraph in body.split("\n"):
                 if paragraph.strip():
-                    p = doc.add_paragraph(paragraph.strip())
-                    p.style.font.size = Pt(11)
+                    doc.add_paragraph(paragraph.strip())
     file_name = f"{company_name.replace(' ', '_')}_Sales_Playbook.docx"
     doc.save(file_name)
     return file_name
@@ -198,7 +182,6 @@ def main():
         deliverables = create_deliverables(st.session_state.info, personas, collateral_text)
         st.success("✅ Custom Sales Playbook Generated!")
         st.text_area("📄 Full Playbook Preview", deliverables, height=600)
-
         if st.button("📥 Download as Word Document"):
             file_name = save_to_word(deliverables, st.session_state.info["company_name"])
             with open(file_name, "rb") as f:

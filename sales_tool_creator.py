@@ -1,20 +1,19 @@
+# sales_tool_creator.py - full app with python-docx for reading and writing Word files
+
 import streamlit as st
 import openai
 import requests
 import pdfkit
 import os
-import docx2txt
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from typing import List
 from PyPDF2 import PdfReader
-from docx import Document
+from docx import Document as DocxDocument
 from docx.shared import Pt
 
-# Initialize OpenAI client
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
-# Crawl website up to 10 pages
 def extract_website_text(base_url, max_pages=10):
     visited = set()
     to_visit = [base_url]
@@ -44,7 +43,6 @@ def extract_website_text(base_url, max_pages=10):
             continue
     return "\n\n".join(all_text)[:10000]
 
-# Company input form
 def get_company_info():
     st.header("🚀 Sales Playbook Generator")
     company_name = st.text_input("Company Name")
@@ -57,7 +55,7 @@ def get_company_info():
 
     st.markdown("### 📎 Optional: Upload Sales Collateral")
     uploaded_files = st.file_uploader(
-        "Upload brochures, PDFs, or Word docs to help GPT generate a more complete playbook",
+        "Upload brochures, PDFs, or Word docs",
         type=["pdf", "docx"],
         accept_multiple_files=True
     )
@@ -82,7 +80,6 @@ def get_company_info():
             st.warning("Please complete all fields.")
     return None
 
-# Extract PDF and DOCX content
 def extract_uploaded_text(files):
     content = []
     for file in files:
@@ -91,12 +88,12 @@ def extract_uploaded_text(files):
             text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
             content.append(text)
         elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            text = docx2txt.process(file)
+            doc = DocxDocument(file)
+            text = "\n".join([para.text for para in doc.paragraphs])
             content.append(text)
     return "\n\n".join(content)
 
-# Persona builder
-def get_user_defined_personas() -> List[dict]:
+def get_user_defined_personas():
     st.markdown("### 👥 Add Customer Personas")
     if "personas" not in st.session_state:
         st.session_state.personas = []
@@ -123,11 +120,11 @@ def get_user_defined_personas() -> List[dict]:
         for p in st.session_state.personas:
             st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
 
-# GPT playbook generation
 def create_deliverables(info, personas, collateral_text=""):
     persona_summary = "\n".join(
         [f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]
     ) if personas else "No personas provided."
+
     prompt = f"""
 Company Name: {info['company_name']}
 Website URL: {info['website']}
@@ -141,12 +138,12 @@ Tone: {info['tone']}
 Customer personas:
 {persona_summary}
 
-User notes: {info.get("extra_notes", "")}
+User notes: {info.get('extra_notes', '')}
 
 Uploaded collateral:
 {collateral_text[:3000]}
 
-Now generate a complete B2B Sales Playbook with sections for:
+Generate a complete B2B Sales Playbook with sections for:
 - Company Overview
 - Value Propositions
 - Customer Benefits
@@ -161,15 +158,16 @@ Now generate a complete B2B Sales Playbook with sections for:
 """
     response = client.chat.completions.create(
         model="gpt-4",
-        messages=[{"role": "system", "content": "You are a B2B sales strategist."},
-                  {"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": "You are a B2B sales strategist."},
+            {"role": "user", "content": prompt}
+        ],
         temperature=0.7
     )
     return response.choices[0].message.content.strip()
 
-# Build Word document
 def save_to_word(content, company_name="Sales_Playbook"):
-    doc = Document()
+    doc = DocxDocument()
     doc.add_heading(f"{company_name} B2B Sales Playbook", 0)
     for section in content.split("### "):
         if section.strip():
@@ -185,7 +183,6 @@ def save_to_word(content, company_name="Sales_Playbook"):
     doc.save(file_name)
     return file_name
 
-# Main app flow
 def main():
     st.set_page_config(layout="wide")
     st.title("🎯 B2B Sales Playbook Generator")

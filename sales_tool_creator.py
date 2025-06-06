@@ -74,9 +74,12 @@ def extract_uploaded_text(files):
     content = []
     for file in files:
         if file.type == "application/pdf":
-            pdf = PdfFileReader(file)
-            text = "\n".join([page.extractText() for page in pdf.pages])
-            content.append(text)
+            try:
+                pdf = PdfFileReader(file)
+                text = "\n".join([pdf.getPage(i).extractText() for i in range(pdf.getNumPages())])
+                content.append(text)
+            except Exception as e:
+                st.warning(f"⚠️ Unable to extract PDF content: {e}")
         elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             doc = DocxDocument(file)
             text = "\n".join([para.text for para in doc.paragraphs])
@@ -104,7 +107,7 @@ def get_user_defined_personas():
                 })
                 st.success(f"Added persona: {industry} - {persona}")
             else:
-                st.warning("Please fill in all fields before adding.")
+                st.warning("Please complete all fields.")
     if st.session_state.personas:
         st.markdown("#### Current Personas:")
         for p in st.session_state.personas:

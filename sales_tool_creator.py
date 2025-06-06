@@ -1,5 +1,3 @@
-# sales_tool_creator.py - full app with python-docx for reading and writing Word files
-
 import streamlit as st
 import openai
 import requests
@@ -8,7 +6,7 @@ import os
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from typing import List
-from PyPDF2 import PdfReader
+from PyPDF2 import PdfFileReader
 from docx import Document as DocxDocument
 from docx.shared import Pt
 
@@ -84,8 +82,8 @@ def extract_uploaded_text(files):
     content = []
     for file in files:
         if file.type == "application/pdf":
-            pdf = PdfReader(file)
-            text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+            pdf = PdfFileReader(file)
+            text = "\n".join([page.extractText() for page in pdf.pages])
             content.append(text)
         elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             doc = DocxDocument(file)

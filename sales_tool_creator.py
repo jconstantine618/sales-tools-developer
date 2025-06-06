@@ -11,6 +11,18 @@ from docx import Document as DocxDocument
 
 client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
 
+EXPANDED_SECTIONS = [
+    {"title": "Ideal Customer Profiles & Segmentation", "instruction": "Define 2–3 Ideal Customer Profiles by segment. Include industry, company size, buyer role, typical challenges, and common decision drivers."},
+    {"title": "Sales Process & Buying Journey Map", "instruction": "Describe the full sales process from lead to close. Map each step to the corresponding stage of the customer’s buying journey. Include decision-makers, timing, and key activities."},
+    {"title": "Competitive Differentiation & Battlecards", "instruction": "Compare this company to 2–3 common competitors. Highlight key product/service differentiators, objections you commonly hear, and how to rebut them. Present in bullet format."},
+    {"title": "Talk Tracks for Key Features", "instruction": "For your top 3 features or capabilities, write 1–2 paragraph talk tracks that connect the feature to an outcome or benefit. Include use-case context where relevant."},
+    {"title": "How to Frame Pricing & ROI", "instruction": "Provide a short conversation guide for discussing pricing in a value-driven way. Include sample ROI framing and examples that demonstrate long-term benefits vs. cost."}
+]
+
+def build_expanded_playbook_prompt(base_prompt: str) -> str:
+    extra = "\n\n".join([f"### {s['title']}\n{s['instruction']}" for s in EXPANDED_SECTIONS])
+    return f"{base_prompt}\n\n{extra}"
+
 def extract_website_text(base_url, max_pages=10):
     visited = set()
     to_visit = [base_url]
@@ -120,11 +132,13 @@ def get_user_defined_personas():
             st.markdown(f"🔹 **{p['industry']} - {p['persona']}**  \n🧩 Pain Points: {', '.join(p['pain_points'])}")
 
 def create_deliverables(info, personas, collateral_text=""):
-    persona_summary = "\n".join([f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}" for p in personas]) if personas else "No personas provided."
-    prompt = f"""
-Company Name: {info['company_name']}
-Website URL: {info['website']}
-Website Text: {info['website_text'][:2000]}
+    persona_summary = "\n".join([
+        f"- {p['industry']} {p['persona']} with pain points: {', '.join(p['pain_points'])}"
+        for p in personas
+    ]) if personas else "No personas provided."
+
+    base_prompt = f"""
+Company Website: {info['website']}
 Products/Services: {info['products_services']}
 Target Audience: {info['target_audience']}
 Top Problems: {info['top_problems']}
@@ -151,9 +165,14 @@ Generate a complete B2B Sales Playbook with sections for:
 - Closing Questions
 - Lead Generation Channels & Next Steps
 """
+
+    prompt = build_expanded_playbook_prompt(base_prompt)
     response = client.chat.completions.create(
         model="gpt-4",
-        messages=[{"role": "system", "content": "You are a B2B sales strategist."}, {"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": "You are a B2B sales strategist."},
+            {"role": "user", "content": prompt}
+        ],
         temperature=0.7
     )
     return response.choices[0].message.content.strip()
@@ -198,3 +217,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

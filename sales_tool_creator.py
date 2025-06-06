@@ -77,13 +77,19 @@ def extract_uploaded_text(files):
             try:
                 pdf = PdfFileReader(file)
                 text = "\n".join([pdf.getPage(i).extractText() for i in range(pdf.getNumPages())])
+                if text.strip():
+                    content.append(text)
+                else:
+                    st.warning("⚠️ PDF uploaded but contains no extractable text. It may be scanned or image-based.")
+            except Exception as e:
+                st.warning(f"⚠️ Unable to extract PDF content: {str(e)}")
+        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            try:
+                doc = DocxDocument(file)
+                text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
                 content.append(text)
             except Exception as e:
-                st.warning(f"⚠️ Unable to extract PDF content: {e}")
-        elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            doc = DocxDocument(file)
-            text = "\n".join([para.text for para in doc.paragraphs])
-            content.append(text)
+                st.warning(f"⚠️ Unable to extract Word content: {str(e)}")
     return "\n\n".join(content)
 
 def get_user_defined_personas():

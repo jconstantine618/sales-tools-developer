@@ -4,3 +4,4 @@ pdfkit>=1.0.0
 beautifulsoup4
 requests
 python-docx
+PyPDF2==1.26.0
